@@ -1,8 +1,9 @@
-package generator
+package proto
 
 import (
 	"bufio"
-	"flag"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,74 +17,71 @@ type proto struct {
 	members map[string]string
 }
 
-var protoArray = make([]*proto, 0)
 var protoNameMap = make(map[string]byte)
+var logger = log.New(os.Stderr, "", log.Lshortfile)
 
-func main() {
-	var srcPath, tarPath string
-	flag.StringVar(&srcPath, "src", "./", "protocol source files path")
-	flag.StringVar(&tarPath, "tar", "./", "protocol target files path")
-	flag.Parse()
-
-	if !filepath.IsAbs(srcPath) {
-		log.Fatalf("src: '%s' must be absolute path.\n", srcPath)
-	}
-
-	if !filepath.IsAbs(tarPath) {
-		log.Fatalf("tar: '%s' must be absolute path.\n", tarPath)
-	}
-
+func Start(srcPath, tarPath string) {
 	go parseProtoFile(tarPath)
-
 	walkThrough(srcPath)
 }
 
 func walkThrough(srcPath string) {
-	if err := filepath.Walk(path, walkFunc); err != nil {
-		log.Fatalf("walkThrough() error: %s\n", err.Error())
+	if err := filepath.Walk(srcPath, walkFunc); err != nil {
+		logger.Fatalf("walkThrough() error: %s\n", err.Error())
 	}
 }
 
-func walkFunc(path string, info os.FileInfo, err Error) Error {
+func walkFunc(path string, info os.FileInfo, err error) error {
 	if !info.IsDir() {
 		if filepath.Ext(info.Name()) == ".proto" {
 			protoFile_ch <- path
 		}
 	}
+	return err
 }
 
 func parseProtoFile(tarPath string) {
+
 	for {
 		select {
-		case protoFile <- protoFile_ch:
+		case protoFile := <-protoFile_ch:
+			fmt.Printf("parsing file: %s....\n\n", protoFile)
+
 			fh, err := os.Open(protoFile)
 			defer fh.Close()
 
-			if !err {
-				log.Fatalf("parseProtoFile: %s \nerror: %s\n", err.Error())
+			if err != nil {
+				logger.Fatalf("parseProtoFile: %s \nerror: %s\n", err.Error())
 			}
 
-			readFile(fh, protoFile)
+			protoArray := readFile(fh, protoFile)
+
+			//test print
+			for _, v := range protoArray {
+				v.print()
+				fmt.Println("==========================")
+			}
 		}
 	}
 }
 
-func readFile(fh *File, fileName string) {
+func readFile(fh *os.File, fileName string) []*proto {
 	fhreader := bufio.NewReader(fh)
 	lineNum := 0
-	protoBlock := nil
+	var protoBlock *proto
 	isCloseBlock := true
+	protoArray := make([]*proto, 0)
 
 	for {
-		line, _, err := fhreader.ReadLine() //"/r/n" or "/n" is removed
+		rline, _, err := fhreader.ReadLine() //"/r/n" or "/n" is removed
+		line := string(rline)
 
 		if err != nil {
 			if err == io.EOF {
-				log.Printf("%s: ok\n", fileName)
 				break
 			}
 
-			log.Fatalf("readFile error: %s\n", err.Error())
+			logger.Fatalf("readFile error: %s\n", err.Error())
 		}
 
 		lineNum++
@@ -91,7 +89,7 @@ func readFile(fh *File, fileName string) {
 		//remove comments
 		commentPos := strings.Index(line, "//")
 		if commentPos != -1 {
-			line = line[commentPos:]
+			line = line[:commentPos]
 		}
 		line = strings.TrimSpace(line)
 
@@ -105,7 +103,10 @@ func readFile(fh *File, fileName string) {
 			if !isCloseBlock || protoBlock != nil {
 				FatalErr(fileName, line, lineNum, "proto block starts twice!")
 			}
-			protoBlock = &proto{}
+			protoBlock = &proto{
+				name:    "",
+				members: make(map[string]string),
+			}
 			isCloseBlock = false
 		}
 
@@ -121,7 +122,7 @@ func readFile(fh *File, fileName string) {
 				FatalErr(fileName, line, lineNum, "proto ending should be just \"}\"!")
 			}
 
-			protoArray = Append(protoArray, protoBlock)
+			protoArray = append(protoArray, protoBlock)
 			protoBlock = nil
 			isCloseBlock = true
 
@@ -129,7 +130,7 @@ func readFile(fh *File, fileName string) {
 		}
 
 		//now focus on the proto block parsing
-		if !protoBlock {
+		if protoBlock == nil {
 			FatalErr(fileName, line, lineNum, "proto block does not start yet!")
 		}
 
@@ -140,7 +141,7 @@ func readFile(fh *File, fileName string) {
 			}
 			line = line[:blockStartPos]
 			line = strings.TrimSpace(line)
-			if strings.ContainAny(line, " ") {
+			if strings.ContainsAny(line, " ") {
 				FatalErr(fileName, line, lineNum, "proto name should not contain any spaces!")
 			}
 
@@ -162,6 +163,9 @@ func readFile(fh *File, fileName string) {
 
 		for _, val := range memberList {
 			val = strings.TrimSpace(val)
+			if len(val) <= 0 {
+				continue
+			}
 			valPair := strings.Split(val, ":")
 			if len(valPair) != 2 {
 				FatalErr(fileName, line, lineNum, "proto member error!")
@@ -169,7 +173,7 @@ func readFile(fh *File, fileName string) {
 
 			memberName := strings.TrimSpace(valPair[0])
 			memberType := strings.TrimSpace(valPair[1])
-			_, ok := proto.members[memberName]
+			_, ok := protoBlock.members[memberName]
 			if ok {
 				FatalErr(fileName, line, lineNum, "proto member name redefined!")
 			}
@@ -191,7 +195,7 @@ func readFile(fh *File, fileName string) {
 				//fixed length array ?
 				arrPos := strings.Index(memberType, "/")
 				if arrPos != -1 {
-					if strings.Index(memberType[arrPos:], "/") != -1 { //one more "/" ?
+					if strings.Index(memberType[arrPos+1:], "/") != -1 { //one more "/" ?
 						FatalErr(fileName, line, lineNum, "proto member arry type error!")
 					}
 
@@ -206,12 +210,24 @@ func readFile(fh *File, fileName string) {
 				}
 			}
 
-			proto.members[memberName] = memberType
+			protoBlock.members[memberName] = memberType
 		}
 	}
+
+	return protoArray
 }
 
 func FatalErr(fileName, line string, lineNum int, reason string) {
-	log.Fatalf("proto error:file: %s line:%s line number:%d\nreason:%s\n",
-		fileName, line, lineNum, reason)
+	l := fmt.Sprintf("parsing proto file: %s:%d\nerror str: %s\nreason: %s\n",
+		fileName, lineNum, line, reason)
+	logger.Output(2, l)
+	os.Exit(1)
+}
+
+func (this *proto) print() {
+	fmt.Printf("type %s struct {\n", this.name)
+	for k, v := range this.members {
+		fmt.Printf("	%s %s\n", k, v)
+	}
+	fmt.Println("}")
 }
