@@ -1,0 +1,14 @@
+//role protocol relative
+roleInfo { 
+	id:uint64,
+	name:string, 				
+	age:uint8					//just a single member at a line,with or without "," is ok
+	lv:uint16,money:float32,	//split by ","
+	exp:uint32,soul:float64,
+	unarray:[uint8],			//array of uncertain length 
+	skill:[uint32/3],			//array of certain length
+} //the end of protocol
+
+roleInfoList {
+	roleList:[roleInfo]
+}
