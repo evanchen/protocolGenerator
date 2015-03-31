@@ -1,4 +1,4 @@
-package proto
+package protocol
 
 import (
 	"bufio"
@@ -10,7 +10,8 @@ import (
 	"strings"
 )
 
-var protoFile_ch chan string = make(chan string)
+var protoFile_ch = make(chan string)
+var finishch = make(chan bool)
 
 type proto struct {
 	name    string
@@ -20,12 +21,16 @@ type proto struct {
 var protoNameMap = make(map[string]byte)
 var logger = log.New(os.Stderr, "", log.Lshortfile)
 
-func Start(srcPath, tarPath string) {
+func Generate(srcPath, tarPath string) {
 	go parseProtoFile(tarPath)
 	walkThrough(srcPath)
+
+	<-finishch
 }
 
 func walkThrough(srcPath string) {
+	defer close(protoFile_ch)
+
 	if err := filepath.Walk(srcPath, walkFunc); err != nil {
 		logger.Fatalf("walkThrough() error: %s\n", err.Error())
 	}
@@ -44,7 +49,11 @@ func parseProtoFile(tarPath string) {
 
 	for {
 		select {
-		case protoFile := <-protoFile_ch:
+		case protoFile, ok := <-protoFile_ch:
+			if !ok { //finish reading
+				finishch <- true
+				break
+			}
 			fmt.Printf("parsing file: %s....\n\n", protoFile)
 
 			fh, err := os.Open(protoFile)
@@ -191,23 +200,7 @@ func readFile(fh *os.File, fileName string) []*proto {
 				}
 				memberType = strings.TrimLeft(memberType, "[")
 				memberType = strings.TrimRight(memberType, "]")
-
-				//fixed length array ?
-				arrPos := strings.Index(memberType, "/")
-				if arrPos != -1 {
-					if strings.Index(memberType[arrPos+1:], "/") != -1 { //one more "/" ?
-						FatalErr(fileName, line, lineNum, "proto member arry type error!")
-					}
-
-					typePair := strings.Split(memberType, "/")
-					if len(typePair) != 2 {
-						FatalErr(fileName, line, lineNum, "proto member arry type error!")
-					}
-
-					memberType = fmt.Sprintf("[%s]%s", strings.TrimSpace(typePair[1]), strings.TrimSpace(typePair[0]))
-				} else {
-					memberType = fmt.Sprintf("[]%s", strings.TrimSpace(memberType))
-				}
+				memberType = fmt.Sprintf("[]%s", strings.TrimSpace(memberType))
 			}
 
 			protoBlock.members[memberName] = memberType
