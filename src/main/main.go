@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	_ "fmt"
-	"proto"
+	"protocol"
 )
 
 func main() {
@@ -19,6 +19,7 @@ func main() {
 	//if !filepath.IsAbs(tarPath) {
 	//	log.Fatalf("tar: '%s' must be absolute path.\n", tarPath)
 	//}
-	proto.Start(srcPath, tarPath)
-}
+	//protocol.Generate(srcPath, tarPath)
 
+	protocol.TEncodeDecode()
+}
