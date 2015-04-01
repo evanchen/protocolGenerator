@@ -19,7 +19,7 @@ func main() {
 	//if !filepath.IsAbs(tarPath) {
 	//	log.Fatalf("tar: '%s' must be absolute path.\n", tarPath)
 	//}
-	//protocol.Generate(srcPath, tarPath)
-
-	protocol.TEncodeDecode()
+	protocol.Generate(srcPath, tarPath)
+	
+	//protocol.TEncodeDecode()
 }

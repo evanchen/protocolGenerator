@@ -2,13 +2,14 @@
 roleInfo { 
 	id:uint64,
 	name:string, 				
-	age:uint8				//just a single member at a line,with or without "," is ok
-	lv:uint16,money:float32,		//seperated by ","
+	age:uint8					//just a single member at a line,with or without "," is ok
+	lv:uint16,money:float32,	//split by ","
 	exp:uint32,soul:float64,
 	unarray:[uint8],			//array of uncertain length 
-	skill:[uint32/3],			//array of certain length
+	skill:[string],			
 } //the end of protocol
 
 roleInfoList {
+	therole:roleInfo
 	roleList:[roleInfo]
 }

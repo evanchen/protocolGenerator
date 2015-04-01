@@ -80,13 +80,16 @@ func TEncodeDecode() {
 	obj.Skill = []string{"s1", "s2", "s3"}
 
 	arr_obj := CreateRoleInfoList()
+	arr_obj.Therole = *obj
+	arr_obj.Therole.Name = "namechanged"
 	for i := 0; i < 3; i++ {
 		arr_obj.RoleList = append(arr_obj.RoleList, *obj)
 	}
 
 	EncodeData := arr_obj.Marshal()
 	decodeData := CreateRoleInfoList()
-	decodeData, EncodeData = decodeData.Unmarshal(EncodeData)
+	EncodeData = decodeData.Unmarshal(EncodeData)
+	fmt.Printf("therole: %v\n", decodeData.Therole)
 	for k, v := range decodeData.RoleList {
 		fmt.Printf("obj%d: %v\n", k, v)
 	}

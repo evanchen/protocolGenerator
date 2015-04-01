@@ -10,14 +10,18 @@ import (
 	"strings"
 )
 
-var protoFile_ch = make(chan string)
-var finishch = make(chan bool)
+type member struct {
+	mname string
+	mtype string
+}
 
 type proto struct {
 	name    string
-	members map[string]string
+	members []*member
 }
 
+var protoFile_ch = make(chan string)
+var finish_ch = make(chan bool)
 var protoNameMap = make(map[string]byte)
 var logger = log.New(os.Stderr, "", log.Lshortfile)
 
@@ -25,7 +29,7 @@ func Generate(srcPath, tarPath string) {
 	go parseProtoFile(tarPath)
 	walkThrough(srcPath)
 
-	<-finishch
+	<-finish_ch
 }
 
 func walkThrough(srcPath string) {
@@ -51,25 +55,40 @@ func parseProtoFile(tarPath string) {
 		select {
 		case protoFile, ok := <-protoFile_ch:
 			if !ok { //finish reading
-				finishch <- true
+				finish_ch <- true
 				break
 			}
-			fmt.Printf("parsing file: %s....\n\n", protoFile)
+			protoFile = filepath.ToSlash(protoFile)
+			fmt.Printf("parsing file: %s\n\n", protoFile)
 
 			fh, err := os.Open(protoFile)
-			defer fh.Close()
-
 			if err != nil {
-				logger.Fatalf("parseProtoFile: %s \nerror: %s\n", err.Error())
+				logger.Fatalf("parseProtoFile: %s \nerror: %s\n", protoFile, err.Error())
 			}
-
 			protoArray := readFile(fh, protoFile)
+			fh.Close()
 
-			//test print
-			for _, v := range protoArray {
-				v.print()
-				fmt.Println("==========================")
+			//start writing protocol file
+			//get new file name
+			tarFileName := filepath.Base(protoFile)
+			tarFileName = strings.Split(tarFileName, ".")[0]
+			tarFileName = fmt.Sprintf("%sProto.go", tarFileName)
+			tarFileName = filepath.Join(tarPath, tarFileName)
+			wh, err2 := os.Create(tarFileName) //rw truncate
+			if err2 != nil {
+				logger.Fatalf("failed to create protocol file: %s\n", err2.Error())
 			}
+			whwriter := bufio.NewWriter(wh)
+
+			//header
+			printHeader(whwriter)
+			whwriter.Flush()
+			for _, v := range protoArray {
+				fmt.Fprintf(whwriter, "\n//===========================protocol %s===========================\n", v.name)
+				v.printBody(whwriter)
+				whwriter.Flush()
+			}
+			wh.Close()
 		}
 	}
 }
@@ -78,6 +97,7 @@ func readFile(fh *os.File, fileName string) []*proto {
 	fhreader := bufio.NewReader(fh)
 	lineNum := 0
 	var protoBlock *proto
+	var memberConflict map[string]byte
 	isCloseBlock := true
 	protoArray := make([]*proto, 0)
 
@@ -114,8 +134,9 @@ func readFile(fh *os.File, fileName string) []*proto {
 			}
 			protoBlock = &proto{
 				name:    "",
-				members: make(map[string]string),
+				members: make([]*member, 0),
 			}
+			memberConflict = make(map[string]byte)
 			isCloseBlock = false
 		}
 
@@ -133,6 +154,7 @@ func readFile(fh *os.File, fileName string) []*proto {
 
 			protoArray = append(protoArray, protoBlock)
 			protoBlock = nil
+			memberConflict = nil
 			isCloseBlock = true
 
 			continue
@@ -154,6 +176,7 @@ func readFile(fh *os.File, fileName string) []*proto {
 				FatalErr(fileName, line, lineNum, "proto name should not contain any spaces!")
 			}
 
+			line = strings.Title(line)
 			_, ok := protoNameMap[line]
 			if ok {
 				FatalErr(fileName, line, lineNum, "proto name redefined!")
@@ -180,15 +203,17 @@ func readFile(fh *os.File, fileName string) []*proto {
 				FatalErr(fileName, line, lineNum, "proto member error!")
 			}
 
+			//does member name exist
 			memberName := strings.TrimSpace(valPair[0])
-			memberType := strings.TrimSpace(valPair[1])
-			_, ok := protoBlock.members[memberName]
+			memberName = strings.Title(memberName)
+			_, ok := memberConflict[memberName]
 			if ok {
 				FatalErr(fileName, line, lineNum, "proto member name redefined!")
 			}
 
 			//now the member type
-			if strings.HasPrefix(memberType, "[") {
+			memberType := strings.TrimSpace(valPair[1])
+			if strings.HasPrefix(memberType, "[") { //is it an array
 				if !strings.HasSuffix(memberType, "]") {
 					FatalErr(fileName, line, lineNum, "proto member arry type error!")
 				} else if strings.ContainsAny(memberType[:len(memberType)-1], "]") { //one more "]" ?
@@ -200,10 +225,23 @@ func readFile(fh *os.File, fileName string) []*proto {
 				}
 				memberType = strings.TrimLeft(memberType, "[")
 				memberType = strings.TrimRight(memberType, "]")
+				_, isTypeProto := protoNameMap[strings.Title(memberType)]
+				if isTypeProto {
+					memberType = strings.Title(memberType)
+				}
 				memberType = fmt.Sprintf("[]%s", strings.TrimSpace(memberType))
+			} else {
+				_, isTypeProto := protoNameMap[strings.Title(memberType)]
+				if isTypeProto {
+					memberType = strings.Title(memberType)
+				}
 			}
 
-			protoBlock.members[memberName] = memberType
+			m := &member{
+				mname: memberName,
+				mtype: memberType,
+			}
+			protoBlock.members = append(protoBlock.members, m)
 		}
 	}
 
@@ -217,10 +255,94 @@ func FatalErr(fileName, line string, lineNum int, reason string) {
 	os.Exit(1)
 }
 
-func (this *proto) print() {
-	fmt.Printf("type %s struct {\n", this.name)
-	for k, v := range this.members {
-		fmt.Printf("	%s %s\n", k, v)
+func printHeader(w io.Writer) {
+	fmt.Fprintln(w, "//This file is automatically created by protocol generator.")
+	fmt.Fprintln(w, "//Any manual changes are not suggested.\n")
+	
+	fmt.Fprintln(w, "package protocol\n")
+}
+
+func (this *proto) printBody(w io.Writer) {
+	//structure
+	fmt.Fprintf(w, "type %s struct {\n", this.name)
+	for _, v := range this.members {
+		fmt.Fprintf(w, "	%s %s\n", v.mname, v.mtype)
 	}
-	fmt.Println("}")
+	fmt.Fprintln(w, "}\n")
+	//func CreateXXX()
+	fmt.Fprintf(w, "func Create%s() *%s {\n	obj := &%s{}\n	return obj\n}\n\n", this.name, this.name, this.name)
+	//func Marshal()
+	fmt.Fprintf(w, "func (this *%s) Marshal() ([]byte) {\n", this.name)
+	fmt.Fprintln(w, "	buf := make([]byte,0,16)")
+	for _, v := range this.members {
+		_, ok := protoNameMap[v.mtype]
+		if ok {
+			fmt.Fprintf(w, "	buf = append(buf,this.%s.Marshal()...)\n", v.mname)
+		} else {
+			arrPos := strings.Index(v.mtype, "]")
+			if arrPos > 0 { //is it an array
+				arrType := v.mtype[arrPos+1:]
+				fmt.Fprintf(w, "	buf = append(buf,encode_array_%s(this.%s)...)\n", arrType, v.mname)
+			} else {
+				fmt.Fprintf(w, "	buf = append(buf,encode_%s(this.%s)...)\n", v.mtype, v.mname)
+			}
+		}
+	}
+	fmt.Fprintln(w, "	return buf")
+	fmt.Fprintln(w, "}\n")
+
+	//func Unmarshal()
+	fmt.Fprintf(w, "func (this *%s) Unmarshal(Data []byte) ([]byte) {\n", this.name)
+	for _, v := range this.members {
+		_, ok := protoNameMap[v.mtype]
+		if ok {
+			fmt.Fprintf(w, "	Data = this.%s.Unmarshal(Data)\n", v.mname)
+		} else {
+			arrPos := strings.Index(v.mtype, "]")
+			if arrPos > 0 { //is it an array
+				arrType := v.mtype[arrPos+1:]
+				fmt.Fprintf(w, "	this.%s,Data = decode_array_%s(Data)\n", v.mname, arrType)
+			} else {
+				fmt.Fprintf(w, "	this.%s,Data = decode_%s(Data)\n", v.mname, v.mtype)
+			}
+		}
+	}
+	fmt.Fprintln(w, "	return Data")
+	fmt.Fprintln(w, "}\n")
+
+	//protocol array
+	for _, v := range this.members {
+		arrPos := strings.Index(v.mtype, "]")
+		if arrPos > 0 { //is it an array
+			arrType := v.mtype[arrPos+1:]
+			_, ok := protoNameMap[arrType]
+			if ok {
+				//encode array func
+				fmt.Fprintf(w, "func encode_array_%s(%s []%s) ([]byte) {\n", arrType, v.mname, arrType)
+				fmt.Fprintln(w, "	buf := make([]byte,0,16)")
+				fmt.Fprintf(w, "	size := uint16(len(%s))\n", v.mname)
+				fmt.Fprintln(w, "	buf = append(buf,encode_uint16(size)...)")
+				fmt.Fprintf(w, "	for _,obj := range %s {\n", v.mname)
+				fmt.Fprintln(w, "		buf = append(buf,obj.Marshal()...)")
+				fmt.Fprintln(w, "	}")
+				fmt.Fprintln(w, "	return buf")
+				fmt.Fprintln(w, "}\n")
+
+				//decode array func
+				fmt.Fprintf(w, "func decode_array_%s(Data []byte) ([]%s,[]byte) {\n", arrType, arrType)
+				fmt.Fprintln(w, "	var size uint16")
+				fmt.Fprintln(w, "	size,Data = decode_uint16(Data)")
+				fmt.Fprintf(w, "	%s := make([]%s,0,size)\n", v.mname, arrType)
+				fmt.Fprintf(w, "	var obj *%s\n", arrType)
+				fmt.Fprintln(w, "	for i := uint16(0); i < size; i++ {")
+				fmt.Fprintf(w, "		obj = &%s{}\n", arrType)
+				fmt.Fprintln(w, "		Data = obj.Unmarshal(Data)")
+				fmt.Fprintf(w, "		%s = append(%s,*obj)\n", v.mname, v.mname)
+				fmt.Fprintln(w, "	}")
+				fmt.Fprintf(w, "	return %s,Data\n", v.mname)
+				fmt.Fprintln(w, "}\n")
+			}
+		}
+	}
+
 }
