@@ -20,6 +20,6 @@ func main() {
 	//	log.Fatalf("tar: '%s' must be absolute path.\n", tarPath)
 	//}
 	protocol.Generate(srcPath, tarPath)
-	
+
 	//protocol.TEncodeDecode()
 }

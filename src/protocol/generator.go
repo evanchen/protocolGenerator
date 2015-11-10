@@ -258,7 +258,7 @@ func FatalErr(fileName, line string, lineNum int, reason string) {
 func printHeader(w io.Writer) {
 	fmt.Fprintln(w, "//This file is automatically created by protocol generator.")
 	fmt.Fprintln(w, "//Any manual changes are not suggested.\n")
-	
+
 	fmt.Fprintln(w, "package protocol\n")
 }
 
@@ -282,9 +282,9 @@ func (this *proto) printBody(w io.Writer) {
 			arrPos := strings.Index(v.mtype, "]")
 			if arrPos > 0 { //is it an array
 				arrType := v.mtype[arrPos+1:]
-				fmt.Fprintf(w, "	buf = append(buf,encode_array_%s(this.%s)...)\n", arrType, v.mname)
+				fmt.Fprintf(w, "	buf = append(buf,Encode_array_%s(this.%s)...)\n", arrType, v.mname)
 			} else {
-				fmt.Fprintf(w, "	buf = append(buf,encode_%s(this.%s)...)\n", v.mtype, v.mname)
+				fmt.Fprintf(w, "	buf = append(buf,Encode_%s(this.%s)...)\n", v.mtype, v.mname)
 			}
 		}
 	}
@@ -301,9 +301,9 @@ func (this *proto) printBody(w io.Writer) {
 			arrPos := strings.Index(v.mtype, "]")
 			if arrPos > 0 { //is it an array
 				arrType := v.mtype[arrPos+1:]
-				fmt.Fprintf(w, "	this.%s,Data = decode_array_%s(Data)\n", v.mname, arrType)
+				fmt.Fprintf(w, "	this.%s,Data = Decode_array_%s(Data)\n", v.mname, arrType)
 			} else {
-				fmt.Fprintf(w, "	this.%s,Data = decode_%s(Data)\n", v.mname, v.mtype)
+				fmt.Fprintf(w, "	this.%s,Data = Decode_%s(Data)\n", v.mname, v.mtype)
 			}
 		}
 	}
@@ -318,10 +318,10 @@ func (this *proto) printBody(w io.Writer) {
 			_, ok := protoNameMap[arrType]
 			if ok {
 				//encode array func
-				fmt.Fprintf(w, "func encode_array_%s(%s []%s) ([]byte) {\n", arrType, v.mname, arrType)
+				fmt.Fprintf(w, "func Encode_array_%s(%s []%s) ([]byte) {\n", arrType, v.mname, arrType)
 				fmt.Fprintln(w, "	buf := make([]byte,0,16)")
 				fmt.Fprintf(w, "	size := uint16(len(%s))\n", v.mname)
-				fmt.Fprintln(w, "	buf = append(buf,encode_uint16(size)...)")
+				fmt.Fprintln(w, "	buf = append(buf,Encode_uint16(size)...)")
 				fmt.Fprintf(w, "	for _,obj := range %s {\n", v.mname)
 				fmt.Fprintln(w, "		buf = append(buf,obj.Marshal()...)")
 				fmt.Fprintln(w, "	}")
@@ -329,9 +329,9 @@ func (this *proto) printBody(w io.Writer) {
 				fmt.Fprintln(w, "}\n")
 
 				//decode array func
-				fmt.Fprintf(w, "func decode_array_%s(Data []byte) ([]%s,[]byte) {\n", arrType, arrType)
+				fmt.Fprintf(w, "func Decode_array_%s(Data []byte) ([]%s,[]byte) {\n", arrType, arrType)
 				fmt.Fprintln(w, "	var size uint16")
-				fmt.Fprintln(w, "	size,Data = decode_uint16(Data)")
+				fmt.Fprintln(w, "	size,Data = Decode_uint16(Data)")
 				fmt.Fprintf(w, "	%s := make([]%s,0,size)\n", v.mname, arrType)
 				fmt.Fprintf(w, "	var obj *%s\n", arrType)
 				fmt.Fprintln(w, "	for i := uint16(0); i < size; i++ {")
