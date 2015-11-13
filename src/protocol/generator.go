@@ -256,7 +256,8 @@ func FatalErr(fileName, line string, lineNum int, reason string) {
 }
 
 func printHeader(w io.Writer) {
-	fmt.Fprintln(w, "//This file is automatically created by protocol generator.")
+	fmt.Fprintln(w, "//This file is automatically created by protocolGenerator.")
+	fmt.Fprintln(w, "//https://github.com/evanchen/protocolGenerator")
 	fmt.Fprintln(w, "//Any manual changes are not suggested.\n")
 
 	fmt.Fprintln(w, "package protocol\n")
